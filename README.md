@@ -113,8 +113,8 @@ pinned environment is `images/analysis/environment.yml`.
 - `quick` checks that every wrapper resolves and that each key tool reports its expected version.
   It takes about a minute.
 - `full` also runs each image on small test data and checks the output content. It takes about
-  10 minutes on 4 cores and needs AVX2. On the login node, use `--bsub` (plus `--group`/`--queue` if your LSF site needs them) to
-  submit it.
+  10 minutes on 4 cores and needs AVX2. On the login node, use `--bsub` to submit it (the queue and LSF group the admin gave at install
+  time are used; `--queue`/`--group` override them).
 
 The full test runs:
 

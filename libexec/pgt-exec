@@ -10,6 +10,14 @@ set -u
 HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 # shellcheck source=/dev/null
 . "$HERE/etc/pgt.conf" || { echo "pangenome-tools: cannot read $HERE/etc/pgt.conf" >&2; exit 2; }
+# apptainer built against libraries in its own folder: the installer records that folder (host side only;
+# --cleanenv keeps it out of the container)
+if [ -n "${PGT_APPTAINER_LD_LIBRARY_PATH:-}" ]; then
+  export LD_LIBRARY_PATH="$PGT_APPTAINER_LD_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+# an apptainer module may set APPTAINERENV_* (e.g. APPTAINERENV_LD_LIBRARY_PATH), which --cleanenv still passes
+# into the container and which can make the tools load host libraries. Use PGT_ENV instead.
+for v in $(compgen -e | grep -E '^(APPTAINER|SINGULARITY)ENV_' || true); do unset "$v"; done
 [ $# -ge 2 ] || { echo "usage: pgt-exec cactus|kcp|analysis COMMAND [ARGS...]" >&2; exit 2; }
 img=$1; shift
 case "$img" in
@@ -42,12 +50,12 @@ envs="TMPDIR=$t,PYTHONNOUSERSITE=1"
 [ -n "${PGT_ENV:-}" ] && envs="$envs,$PGT_ENV"
 if grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
   # shellcheck disable=SC2086
-  exec "$PGT_APPTAINER" exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" "${args[@]}" "$sif" "$@"
+  exec "$PGT_APPTAINER" exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" ${args[@]+"${args[@]}"} "$sif" "$@"
 fi
 # A node without AVX2 (e.g. an older login node): the tools are built for plain x86-64, but some libraries
 # may still use AVX2 instructions. If one does, say so instead of leaving a bare "Illegal instruction".
 # shellcheck disable=SC2086
-"$PGT_APPTAINER" exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" "${args[@]}" "$sif" "$@"
+"$PGT_APPTAINER" exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" ${args[@]+"${args[@]}"} "$sif" "$@"
 rc=$?
 if [ $rc -eq 132 ]; then
   echo "pangenome-tools: illegal instruction: '$1' needs AVX2, which $(hostname -s) does not have. Run it on a compute node." >&2

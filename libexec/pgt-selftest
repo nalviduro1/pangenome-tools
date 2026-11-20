@@ -17,6 +17,9 @@
 set -u
 HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 . "$HERE/etc/pgt.conf" || exit 2
+if [ -n "${PGT_APPTAINER_LD_LIBRARY_PATH:-}" ]; then
+  export LD_LIBRARY_PATH="$PGT_APPTAINER_LD_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 LEVEL=quick WORK= CORES=4 BSUB=false QUEUE=${PGT_LSF_QUEUE:-normal} GROUP=${PGT_LSF_GROUP:-} MEM=16000
 while [ $# -gt 0 ]; do
   case "$1" in

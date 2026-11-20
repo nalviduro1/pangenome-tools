@@ -66,6 +66,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v=$(cat VERSION)
+          # release notes = ADMIN.md with this repository and version filled in, so the admin can copy the commands
+          sed -e "s#<owner>#${GITHUB_REPOSITORY_OWNER}#g" -e "s#<version>#$v#g" ADMIN.md > "$RUNNER_TEMP/notes.md"
           # --target: creates the tag on the tested commit when it does not exist yet (manual runs)
-          gh release create "v$v" --target "$GITHUB_SHA" --title "pangenome-tools $v" --notes-file ADMIN.md \
+          gh release create "v$v" --target "$GITHUB_SHA" --title "pangenome-tools $v" --notes-file "$RUNNER_TEMP/notes.md" \
              "$RUNNER_TEMP"/release/*.sif "$RUNNER_TEMP"/release/pangenome-tools-$v.tar.gz "$RUNNER_TEMP"/release/SHA256SUMS
