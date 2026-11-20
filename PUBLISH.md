@@ -8,8 +8,8 @@ would install them, and attaches the files to a release. Nothing has to be built
 2. Upload this folder's contents to it, including the hidden `.github/` folder:
 
    ```sh
-   cd 07_utils/pangenome-tools
-   git init -b main && git add -A && git commit -m "pangenome-tools 2026.11.1"
+   cd pangenome-tools
+   git init -b main && git add -A && git commit -m "pangenome-tools $(cat VERSION)"
    git remote add origin https://github.com/<you>/pangenome-tools.git && git push -u origin main
    ```
 
@@ -30,4 +30,4 @@ artifact for 3 days.
 - **1KCP-analysis:** MIT licence, kept at `/opt/1KCP-analysis/LICENSE` in the image.
 - **The conda packages:** each keeps its own licence inside the image.
 
-The patches and scripts in this folder are yours. Add a `LICENSE` file if the repository is public.
+The patches and scripts in this repository are under the MIT licence (`LICENSE`).

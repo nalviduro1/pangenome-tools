@@ -12,6 +12,8 @@
 #                         and match its input FASTA
 #          about 10 minutes on 4 cores; needs a node with AVX2 (most compute nodes)
 #   --bsub submit the run to LSF instead (on an AVX2 node) and print how to read the result
+#   --mem  memory for the --bsub job in MB (default 16000; sent with an explicit unit, so it does not
+#          depend on the site's LSF_UNIT_FOR_LIMITS)
 #
 # Prints one OK / FAIL / SKIP line per check and a total; exit status = number of failures.
 set -u
@@ -20,7 +22,7 @@ HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 if [ -n "${PGT_APPTAINER_LD_LIBRARY_PATH:-}" ]; then
   export LD_LIBRARY_PATH="$PGT_APPTAINER_LD_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
-LEVEL=quick WORK= CORES=4 BSUB=false QUEUE=${PGT_LSF_QUEUE:-normal} GROUP=${PGT_LSF_GROUP:-} MEM=16000
+LEVEL=quick WORK= CORES=4 BSUB=false QUEUE=${PGT_LSF_QUEUE:-normal} GROUP=${PGT_LSF_GROUP:-} MEM=16000 SEL=${PGT_LSF_SELECT:-}
 while [ $# -gt 0 ]; do
   case "$1" in
     quick|full) LEVEL=$1; shift;;
@@ -42,11 +44,15 @@ if $BSUB; then
   WORK=$(cd "$WORK" && pwd)
   cmd="$HERE/libexec/pgt-selftest $LEVEL --workdir $WORK/run --cores $CORES"
   grp=(); [ -n "$GROUP" ] && grp=(-G "$GROUP")   # some LSF sites require a group (-G)
-  # -R sections in LSF's order: select[] rusage[] span[]
-  bsub -J pgt-selftest -q "$QUEUE" ${grp[@]+"${grp[@]}"} -n "$CORES" -M "$MEM" \
-       -R "select[avx2] rusage[mem=$MEM] span[hosts=1]" \
+  # -R sections in LSF's order: select[] rusage[] span[]. Memory carries its unit (MB): a bare number
+  # is read in the site's LSF_UNIT_FOR_LIMITS, which is KB unless the site changed it.
+  case "$MEM" in *[!0-9]*|'') echo "--mem takes a number of MB" >&2; exit 2;; esac
+  res="${SEL:+select[$SEL] }rusage[mem=${MEM}MB] span[hosts=1]"
+  bsub -J pgt-selftest -q "$QUEUE" ${grp[@]+"${grp[@]}"} -n "$CORES" -M "${MEM}MB" \
+       -R "$res" \
        -cwd "$WORK" -oo "$WORK/selftest.out" -eo "$WORK/selftest.err" "$cmd" || exit 2
   echo "Submitted. When it finishes:  grep -E '^(OK|FAIL|SKIP)|failure' $WORK/selftest.out"
+  [ -n "$SEL" ] || echo "Note: no AVX2 node selector is set; if the job lands on a node without AVX2 the Cactus tests are SKIPPED. Re-run with PGT_LSF_SELECT=<your AVX2 resource> set."
   exit 0
 fi
 

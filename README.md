@@ -21,7 +21,8 @@ module load pangenome-analysis/<ver>    # truvari, kmc, liftoff, miniprot, pange
 module help pangenome-analysis/<ver>    # where the commands are; `ls` that folder to see all of them
 ```
 
-The three modules can be loaded together: no command name appears in two of them. The 1KCP
+The three modules can be loaded together: no command name appears in two of them, apart from
+`pangenome-tools-selftest`, which is the same script in each. The 1KCP
 builder's own copies of vg, odgi, minigraph, GFAffix and Mash are older than Cactus's, so they are
 named `kcp-vg`, `kcp-odgi`, `kcp-minigraph`, `kcp-gfaffix` and `kcp-mash`. To run anything else
 inside an image, use `cactus-exec CMD`, `kcp-exec CMD` or `pga-exec CMD`.
@@ -102,7 +103,8 @@ vg 1.59.0, Mash 2.3, KMC 3.2.4 and GenomeScope 2.0.1. The full pinned environmen
 ### Pangenome analysis tools
 
 Truvari 4.2.2, KMC 3.2.4, Liftoff 1.6.3, miniprot 0.18, pangene 1.1 (with `pangene.js` and `k8`),
-minimap2 2.31 (`paftools.js`), rustybam 0.2.2 (`rb`), seqtk 1.5, WhatsHap 2.8, RFMix 2.03, and
+minimap2 2.31 (on the PATH as `paftools.js`; the `minimap2` command itself comes from the cactus
+module, or run this one with `pga-exec minimap2`), rustybam 0.2.2 (`rb`), seqtk 1.5, WhatsHap 2.8, RFMix 2.03, and
 `pga-python` (Python 3.11 with python-igraph, leidenalg, numpy, scipy, pandas and edlib). The
 pinned environment is `images/analysis/environment.yml`.
 
@@ -114,7 +116,7 @@ pinned environment is `images/analysis/environment.yml`.
   It takes about a minute.
 - `full` also runs each image on small test data and checks the output content. It takes about
   10 minutes on 4 cores and needs AVX2. On the login node, use `--bsub` to submit it (the queue and LSF group the admin gave at install
-  time are used; `--queue`/`--group` override them).
+  time are used; `--queue`/`--group` override them, and `--mem` sets the job's memory in MB).
 
 The full test runs:
 
@@ -134,3 +136,8 @@ and regenerate the lock with `micromamba env export -p /opt/envs/<env> --explici
 converts all three to `.sif`, runs `pangenome-tools-selftest full` on them, and publishes a release
 with the `.sif` files, the scripts tarball and `SHA256SUMS`. To make a new release, update `VERSION`
 and push a tag `v<version>`.
+
+## Licence
+
+MIT (see `LICENSE`) for the scripts, wrappers, patches and tests in this repository. The tools
+inside the images keep their own licences; see `PUBLISH.md`.

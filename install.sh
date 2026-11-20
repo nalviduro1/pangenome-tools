@@ -20,6 +20,8 @@
 #                       every user except root. The installer checks this and stops if it would happen.
 #   --lsf-queue Q       queue for 'pangenome-tools-selftest --bsub' (default: normal)
 #   --lsf-group G       LSF user group (bsub -G) for 'pangenome-tools-selftest --bsub', if your site needs one
+#   --lsf-select R      LSF select[] expression that picks AVX2 nodes for the selftest job (default: "avx2"
+#                       when 'lsinfo' lists a Boolean resource of that name, otherwise none; "none" = none)
 #   --cactus-default    make cactus/4.0.0 the default 'cactus' module. Without it, the current
 #                       default (an older cactus/<version>) is kept by writing cactus/.version, and users
 #                       get 4.0.0 with 'module load cactus/4.0.0'.
@@ -34,7 +36,7 @@ HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 VERSION=$(cat "$HERE/VERSION")
 CACTUS_VERSION=4.0.0
 PREFIX= MODDIR= SIFDIR=$(dirname "$HERE") APPT= BINDS="/home /data /scratch"
-GROUP= LSF_QUEUE=normal LSF_GROUP= CACTUS_DEFAULT=false FORCE=false
+GROUP= LSF_QUEUE=normal LSF_GROUP= LSF_SELECT=auto CACTUS_DEFAULT=false FORCE=false
 die()  { echo "install.sh: ERROR: $*" >&2; exit 1; }
 step() { echo "== $*"; }
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
@@ -48,6 +50,7 @@ while [ $# -gt 0 ]; do
     --group) GROUP=$2; shift 2;;
     --lsf-queue) LSF_QUEUE=$2; shift 2;;
     --lsf-group) LSF_GROUP=$2; shift 2;;
+    --lsf-select) LSF_SELECT=$2; shift 2;;
     --cactus-default) CACTUS_DEFAULT=true; shift;;
     --force) FORCE=true; shift;;
     -h|--help) usage; exit 0;;
@@ -94,12 +97,19 @@ echo "   checksums: OK ($SIFS)"
 mkdir -p "$PREFIX" || die "cannot create $PREFIX"
 [ -w "$PREFIX" ] || die "$PREFIX is not writable"
 if [ -e "$DEST" ]; then $FORCE || die "$DEST exists (use --force to replace it)"; fi
+replaced=""
 for m in "cactus/$CACTUS_VERSION" "1kcp-builder/$VERSION" "pangenome-analysis/$VERSION"; do
-  if [ -e "$MODDIR/$m" ] && ! $FORCE; then
-    grep -q 'pangenome-tools' "$MODDIR/$m" 2>/dev/null || die "$MODDIR/$m exists and was not written by this installer"
-    die "$MODDIR/$m exists (use --force to replace it)"
+  [ -e "$MODDIR/$m" ] || continue
+  if ! grep -q 'pangenome-tools' "$MODDIR/$m" 2>/dev/null; then
+    $FORCE || die "$MODDIR/$m exists and was not written by this installer (use --force to replace it)"
+  elif grep -qF "$DEST/" "$MODDIR/$m"; then
+    $FORCE || die "$MODDIR/$m exists (use --force to replace it)"
+  else
+    # written by another pangenome-tools release (an upgrade): it will point at this release
+    replaced="$replaced $m"
   fi
 done
+[ -z "$replaced" ] || echo "   upgrade: will point$replaced at release $VERSION (written by an earlier release)"
 if [ -n "$GROUP" ]; then
   getent group "$GROUP" >/dev/null || die "--group $GROUP: no such group"
   t=$(mktemp "$PREFIX/.pgt-grp.XXXXXX"); chgrp "$GROUP" "$t" 2>/dev/null || { rm -f "$t"; die "cannot give files group $GROUP (you must be root or a member)"; }; rm -f "$t"
@@ -147,7 +157,21 @@ if ! $CACTUS_DEFAULT && [ -z "$others_here" ]; then
   done
 fi
 
-# 6. build the install in a temporary folder next to its final place
+# 6. the LSF resource that selects AVX2 nodes for 'pangenome-tools-selftest --bsub'.
+#    lsinfo exits 0 even for an unknown name, so read its table instead of its exit status.
+if [ "$LSF_SELECT" = auto ]; then
+  LSF_SELECT=
+  if command -v lsinfo >/dev/null 2>&1 && lsinfo avx2 2>/dev/null | awk '$1=="avx2" && $2=="Boolean"{f=1} END{exit !f}'; then
+    LSF_SELECT=avx2
+  fi
+fi
+[ "$LSF_SELECT" = none ] && LSF_SELECT=
+if command -v bsub >/dev/null 2>&1; then
+  if [ -n "$LSF_SELECT" ]; then sel="select[$LSF_SELECT]"; else sel="no AVX2 selector (no Boolean 'avx2' resource in lsinfo; see --lsf-select)"; fi
+  echo "   LSF selftest job: queue $LSF_QUEUE${LSF_GROUP:+, group $LSF_GROUP}, $sel"
+fi
+
+# 7. build the install in a temporary folder next to its final place
 TMP="$PREFIX/.install-$VERSION.$$"
 cleanup() { rm -rf "$TMP" "$MODDIR"/.pgt-tmp.$$ 2>/dev/null || true; }
 trap cleanup EXIT
@@ -158,7 +182,7 @@ for s in $SIFS; do cp "$SIFDIR/$s" "$TMP/sif/$s"; done
   || die "copied images do not match their checksums (disk full?)"
 cp "$HERE/libexec/pgt-exec" "$HERE/libexec/pgt-selftest" "$TMP/libexec/"
 cp -r "$HERE/tests" "$TMP/share/tests"; cp -r "$HERE/tools" "$TMP/share/tools"
-cp "$HERE/README.md" "$HERE/VERSION" "$TMP/"
+cp "$HERE/README.md" "$HERE/VERSION" "$TMP/"; [ -r "$HERE/LICENSE" ] && cp "$HERE/LICENSE" "$TMP/"
 cat > "$TMP/etc/pgt.conf" <<EOF
 # written by install.sh $(date '+%F %T') -- edit PGT_APPTAINER or PGT_BINDS_DEFAULT here if they change
 PGT_VERSION="$VERSION"
@@ -168,6 +192,7 @@ PGT_APPTAINER_LD_LIBRARY_PATH="$APPT_LD"
 PGT_BINDS_DEFAULT="$BINDS"
 PGT_LSF_QUEUE="\${PGT_LSF_QUEUE:-$LSF_QUEUE}"
 PGT_LSF_GROUP="\${PGT_LSF_GROUP:-$LSF_GROUP}"
+PGT_LSF_SELECT="\${PGT_LSF_SELECT:-$LSF_SELECT}"
 PGT_CACTUS_SIF="$DEST/sif/cactus-$CACTUS_VERSION.sif"
 PGT_KCP_SIF="$DEST/sif/1kcp-builder-$VERSION.sif"
 PGT_ANALYSIS_SIF="$DEST/sif/pangenome-analysis-$VERSION.sif"
@@ -292,7 +317,8 @@ cat <<EOF
 
 Installed pangenome-tools $VERSION in $DEST
 Modules:  cactus/$CACTUS_VERSION   1kcp-builder/$VERSION   pangenome-analysis/$VERSION
-${note:+         $note
+${replaced:+         now pointing at $VERSION:$replaced
+}${note:+         $note
 }${check:+         $check
 }
 Last step -- the full selftest on a compute node (about 10 minutes, 4 cores; LSF queue $LSF_QUEUE${LSF_GROUP:+, group $LSF_GROUP}):

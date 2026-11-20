@@ -31,14 +31,19 @@ module load apptainer          # or pass --apptainer /path/to/apptainer
 bash pangenome-tools-<version>/install.sh \
      --prefix /opt/tools/pangenome-tools \
      --modulefiles /opt/modulefiles \
-     --binds "/home /data /scratch" \
-     --group <group> \
-     --lsf-queue <queue> --lsf-group <group>
+     --binds "/home /data /scratch"
 ```
 
-- `--binds`: the shared file systems users work in.
-- `--group`: only if `apptainer.conf` has `limit container groups` (the script tells you if it does).
-- `--lsf-queue`, `--lsf-group`: only if your LSF site needs them for the selftest job.
+Change the three paths to yours (`--binds` = the shared file systems users work in). Add any of these
+to the same command only if it applies; the script stops and tells you when one is needed:
+
+| option | add it when |
+|---|---|
+| `--group <unix-group>` | `apptainer.conf` has `limit container groups`: use one of the groups listed there |
+| `--lsf-queue <queue>` | the selftest job should not go to the queue `normal` |
+| `--lsf-group <lsf-user-group>` | your LSF site requires `bsub -G` |
+| `--lsf-select <resource>` | your AVX2 nodes carry a resource with another name than `avx2` (found automatically when it is `avx2`) |
+| `--apptainer /path/to/apptainer` | apptainer is not on your PATH |
 
 The script stops with a message and installs nothing if any check fails. In order, it:
 
@@ -62,8 +67,16 @@ Run `install.sh --help` for the other options:
 
 - `--binds` sets the folders the containers see. The default is `/home /data /scratch`.
 - `--group G` gives the installed files group G (needed with `limit container groups`).
-- `--lsf-queue Q`, `--lsf-group G` are recorded so that `pangenome-tools-selftest full --bsub` needs no extra options.
+- `--lsf-queue Q`, `--lsf-group G`, `--lsf-select R` are recorded so that `pangenome-tools-selftest full --bsub` needs no extra options.
 - `--force` re-installs the same version.
+
+**Upgrading** to a later release is the same command with the new tarball. The `cactus/4.0.0`
+modulefile is shared by all releases, so it is moved to the new release; the older release's own
+modules stay and keep working until you remove them.
+
+Requirements: apptainer 1.0 or later (tested with 1.5.0), Environment Modules or Lmod, bash. LSF is
+used only by `pangenome-tools-selftest --bsub`; on other schedulers, run the selftest without `--bsub`
+inside an interactive job on a compute node.
 
 ## 3. Full selftest on a compute node (about 10 minutes)
 

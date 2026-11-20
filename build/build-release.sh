@@ -28,7 +28,7 @@ echo "== sif: cactus from $image@$digest"
 apptainer pull --disable-cache "$OUT/cactus-4.0.0.sif" "docker://${image%%:*}@$digest"
 echo "== scripts tarball"
 stage=$(mktemp -d); d="$stage/pangenome-tools-$V"; mkdir -p "$d"
-cp -r "$ROOT"/{VERSION,README.md,ADMIN.md,install.sh,images,libexec,tests,tools,build} "$d/"
+cp -r "$ROOT"/{VERSION,LICENSE,README.md,ADMIN.md,install.sh,images,libexec,tests,tools,build} "$d/"
 tar czf "$OUT/pangenome-tools-$V.tar.gz" -C "$stage" "pangenome-tools-$V"; rm -rf "$stage"
 (cd "$OUT" && sha256sum "cactus-4.0.0.sif" "1kcp-builder-$V.sif" "pangenome-analysis-$V.sif" "pangenome-tools-$V.tar.gz" > SHA256SUMS)
 for f in "$OUT"/*.sif; do
