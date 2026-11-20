@@ -1,0 +1,6 @@
+# GenomeScope 2.0.1 (the version in the 1KCP Methods). Kept in its own environment because its
+# conda builds need Python >= 3.12, while the builder environment must stay on Python 3.9.
+name: gs
+channels: [conda-forge, bioconda]
+dependencies:
+  - genomescope2=2.0.1

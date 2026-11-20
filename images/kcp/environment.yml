@@ -1,0 +1,28 @@
+# 1KCP graph builder (JianYang-Lab/1KCP-analysis, 02_Pangenome and 03_Variant), pinned to the
+# versions in Wang et al. 2026 (Nature 654:121) Methods where those versions exist.
+# Python 3.9: the repo's compiled KMC module (py_kmc_api.cpython-39) loads only under 3.9.
+name: kcp
+channels: [conda-forge, bioconda]
+dependencies:
+  - python=3.9
+  - minigraph=0.21
+  - mash=2.3
+  - odgi=0.8.6          # with Python bindings (import odgi)
+  - seqwish=0.7.4
+  - smoothxg=0.7.4      # paper says 0.7.9, which was never released; 0.7.4 is the last 0.7.x
+  - gfaffix=0.2.2       # paper says 0.1.5, but the workflow reads the graph from stdout, which needs >= 0.2.0
+  - vg=1.59.0
+  - kmc=3.2.4
+  - jemalloc
+  - samtools
+  - bedtools
+  - csvtk
+  - bcftools
+  - vcfbub
+  - truvari=4.2.2
+  - minimap2
+  - numpy
+  - scipy
+  - treelib
+  - python-edlib
+  - snakemake-minimal=7.32.4

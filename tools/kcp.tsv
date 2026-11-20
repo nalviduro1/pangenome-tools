@@ -1,0 +1,13 @@
+# wrapper	command in image	quick check (- = presence only)	expected in output
+kcp-init	kcp-init	kcp-init --help	Usage: kcp-init
+kcp-snakemake	snakemake	snakemake --version	7.32.4
+kcp-python	python3	cd /opt/1KCP-analysis/02_Pangenome/scripts && LD_PRELOAD=$CONDA_PREFIX/lib/libjemalloc.so.2 python3 -c "import odgi, numpy, scipy, treelib, edlib, py_kmc_api; print('libs ok')"	libs ok
+seqwish	seqwish	seqwish --version	v0.7.4
+smoothxg	smoothxg	smoothxg --version	v0.7.4
+genomescope2	genomescope2	genomescope2 --version	GenomeScope 2.0
+kcp-vg	vg	vg version	v1.59.0
+kcp-odgi	odgi	odgi version	v0.8.6
+kcp-minigraph	minigraph	minigraph --version	0.21-r606
+kcp-gfaffix	gfaffix	gfaffix --version	0.2.2
+kcp-mash	mash	mash --version	2.3
+kcp-exec	*	-	-

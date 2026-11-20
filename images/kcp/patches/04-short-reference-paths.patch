@@ -1,0 +1,18 @@
+--- a/scripts/border_node_select.py	2026-11-20 11:38:24.497657118 -0500
++++ b/scripts/border_node_select.py	2026-11-20 14:56:54.137191880 -0500
+@@ -57,9 +57,13 @@
+ 
+     initial_chunk = []
+     # Create initial chunk
+-    for i in range(int(ref_len/chunk_size)):
++    # pgt patch 04: the last chunk used the loop variable i, which is unset (first path) or left over
++    # from the previous path when ref_len < chunk_size (e.g. chrM). n_full is the value the code meant;
++    # for paths of chunk_size or longer the chunks are unchanged.
++    n_full = int(ref_len/chunk_size)
++    for i in range(n_full):
+         initial_chunk.append([i * chunk_size + 1, (i + 1) * chunk_size])
+-    initial_chunk.append([(i + 1) * chunk_size + 1, ref_len])
++    initial_chunk.append([n_full * chunk_size + 1, ref_len])
+ 
+     # Filter in bubble node
+     for line in openfile(snarls_file):

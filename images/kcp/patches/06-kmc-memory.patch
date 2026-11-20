@@ -1,0 +1,21 @@
+--- a/rules/graph_filtering.smk	2026-11-20 15:10:12.052759771 -0500
++++ b/rules/graph_filtering.smk	2026-11-20 15:10:12.093709117 -0500
+@@ -111,7 +111,8 @@
+         kmc_list=temp('results/kmc/{sample}.kmer.list')
+     params:
+         kmc_tmp='results/kmc/{sample}.tmp',
+-        prefix='results/kmc/{sample}.kmer'
++        prefix='results/kmc/{sample}.kmer',
++        kmc_mem=config.get('kmc_mem_gb', 20)   # pgt patch 06: KMC RAM cap (GB); the authors' value, 20, is the default
+     conda:
+         "../envs/env.yml"
+     resources:
+@@ -122,7 +123,7 @@
+         """
+             printf '%s\\n' {input.reads} > {output.file}
+             mkdir -p {params.kmc_tmp}
+-            kmc -k29 -m20 -t{threads} -hp -ci1 -cs10000 @{output.file} {params.prefix} {params.kmc_tmp}
++            kmc -k29 -m{params.kmc_mem} -t{threads} -hp -ci1 -cs10000 @{output.file} {params.prefix} {params.kmc_tmp}
+             kmc_tools transform {params.prefix} histogram {output.histo} -cx10000
+             genomescope2 -i {output.histo} -o {output.scope} -k 29
+             python3 scripts/confident_range.py {output.scope}/model.txt > {output.conf}

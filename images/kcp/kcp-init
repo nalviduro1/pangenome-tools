@@ -1,0 +1,146 @@
+#!/bin/bash
+# kcp-init: set up a working copy of the 1KCP graph builder (JianYang-Lab/1KCP-analysis, 02_Pangenome)
+# for your own assemblies. Runs inside the 1kcp-builder image; called through the `kcp-init` wrapper.
+set -euo pipefail
+
+usage() {
+cat <<'EOF'
+Usage: kcp-init DIR --grch38 FASTA --chm13 FASTA --samples TSV (--reads TSV | --sr-fq1 TPL --sr-fq2 TPL)
+                [--kmc-mem GB] [--annotate --anno TPL] [--no-patches]
+
+  DIR          new working directory (must not exist, or be empty)
+  --grch38     GRCh38 FASTA (plain or .gz), e.g. the no-alt analysis set
+  --chm13      CHM13 v2.0 FASTA (plain or .gz)
+  --samples    TSV: sample <TAB> hap1 FASTA <TAB> hap2 FASTA   (plain or .gz; sample names without dots)
+  --reads      TSV: sample <TAB> read file   (one line per file; HiFi fastq(.gz) or any reads)
+               used for the k-mer filter of graph nodes and edges (pgt patch 02)
+  --sr-fq1/2   instead of --reads: the paper's original Illumina inputs, as templates with {sample}
+  --kmc-mem    RAM cap for KMC k-mer counting, in GB (default 20, the authors' value; pgt patch 06)
+  --annotate   also run the node annotation (needs --anno: per-haplotype annotation BED template
+               with {sample} and {haplotype}); default is to build and filter the graph only
+  --no-patches copy the authors' workflow unmodified (then assemblies must be uncompressed at
+               ../01_Assembly/results/{sample}/{sample}.{hap1,hap2}.fasta, and Illumina R1/R2 given)
+
+Then:  cd DIR && kcp-snakemake -j <cores> --keep-going
+EOF
+}
+
+die() { echo "kcp-init: ERROR: $*" >&2; exit 1; }
+
+[ $# -ge 1 ] || { usage; exit 1; }
+case "$1" in -h|--help) usage; exit 0;; esac
+DIR=$1; shift
+GRCH38= CHM13= SAMPLES= READS= FQ1= FQ2= ANNOTATE=false ANNO= PATCHES=true KMCMEM=20
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --grch38) GRCH38=$2; shift 2;;
+    --chm13) CHM13=$2; shift 2;;
+    --samples) SAMPLES=$2; shift 2;;
+    --reads) READS=$2; shift 2;;
+    --sr-fq1) FQ1=$2; shift 2;;
+    --sr-fq2) FQ2=$2; shift 2;;
+    --kmc-mem) KMCMEM=$2; shift 2;;
+    --annotate) ANNOTATE=true; shift;;
+    --anno) ANNO=$2; shift 2;;
+    --no-patches) PATCHES=false; shift;;
+    -h|--help) usage; exit 0;;
+    *) die "unknown option: $1 (see kcp-init --help)";;
+  esac
+done
+
+case "$KMCMEM" in ''|*[!0-9]*) die "--kmc-mem must be a whole number of GB";; esac
+SRC=${KCP_HOME:-/opt/1KCP-analysis}/02_Pangenome
+PATCHDIR=/opt/kcp/patches
+[ -d "$SRC" ] || die "workflow not found at $SRC"
+[ -n "$GRCH38" ] && [ -r "$GRCH38" ] || die "--grch38 missing or unreadable: '$GRCH38'"
+[ -n "$CHM13" ] && [ -r "$CHM13" ] || die "--chm13 missing or unreadable: '$CHM13'"
+[ -n "$SAMPLES" ] && [ -r "$SAMPLES" ] || die "--samples missing or unreadable: '$SAMPLES'"
+if [ -n "$READS" ]; then
+  [ -r "$READS" ] || die "--reads unreadable: $READS"
+  $PATCHES || die "--reads needs the patches (drop --no-patches)"
+elif [ -z "$FQ1" ] || [ -z "$FQ2" ]; then
+  die "give --reads TSV, or both --sr-fq1 and --sr-fq2 templates (the k-mer filter needs reads)"
+fi
+if $ANNOTATE; then
+  [ -n "$ANNO" ] || die "--annotate needs --anno TEMPLATE"
+else
+  $PATCHES || die "without --annotate the workflow needs patch 03 (drop --no-patches, or add --annotate --anno)"
+fi
+if [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ]; then die "$DIR exists and is not empty"; fi
+
+# --- validate the sample sheet before writing anything
+declare -A SEEN=()
+n=0
+while IFS=$'\t' read -r s h1 h2 rest || [ -n "${s:-}" ]; do
+  [ -z "${s:-}" ] && continue
+  case "$s" in \#*) continue;; esac
+  [[ "$s" =~ ^[A-Za-z0-9_-]+$ ]] || die "sample name '$s': use letters, digits, _ or - only (the workflow splits names on '.')"
+  [ -z "${SEEN[$s]:-}" ] || die "sample '$s' listed twice"
+  SEEN[$s]=1
+  [ -n "${h1:-}" ] && [ -r "$h1" ] || die "sample $s: hap1 FASTA missing or unreadable: '${h1:-}'"
+  [ -n "${h2:-}" ] && [ -r "$h2" ] || die "sample $s: hap2 FASTA missing or unreadable: '${h2:-}'"
+  n=$((n+1))
+done < "$SAMPLES"
+[ $n -gt 0 ] || die "no samples in $SAMPLES"
+if [ -n "$READS" ]; then
+  for s in "${!SEEN[@]}"; do
+    awk -F'\t' -v s="$s" '$1==s && $2!=""{f=1} END{exit !f}' "$READS" || die "sample $s has no read file in $READS"
+  done
+  while IFS=$'\t' read -r s f rest || [ -n "${s:-}" ]; do
+    [ -z "${s:-}" ] && continue
+    [ -r "$f" ] || die "read file for $s unreadable: $f"
+  done < "$READS"
+fi
+
+# --- build the working copy in a temporary directory, then move it into place
+PARENT=$(dirname "$DIR"); mkdir -p "$PARENT"
+TMP=$(mktemp -d "$PARENT/.kcp-init.XXXXXX")
+trap 'rm -rf "$TMP"' EXIT
+cp -a "$SRC/." "$TMP/"
+if $PATCHES; then
+  for p in "$PATCHDIR"/*.patch; do
+    (cd "$TMP" && patch -p1 --forward --silent < "$p") || die "patch $(basename "$p") did not apply"
+  done
+fi
+mkdir -p "$TMP/assemblies"
+if [ -n "$READS" ]; then
+  # absolute paths: Snakemake runs from DIR, not from where kcp-init was called
+  while IFS=$'\t' read -r s f rest || [ -n "${s:-}" ]; do
+    [ -z "${s:-}" ] && continue
+    case "$s" in \#*) continue;; esac
+    printf '%s\t%s\n' "$s" "$(readlink -f "$f")"
+  done < "$READS" > "$TMP/data/reads.tsv"
+fi
+: > "$TMP/data/samples.txt"
+while IFS=$'\t' read -r s h1 h2 rest || [ -n "${s:-}" ]; do
+  [ -z "${s:-}" ] && continue
+  case "$s" in \#*) continue;; esac
+  ln -s "$(readlink -f "$h1")" "$TMP/assemblies/$s.hap1.fa"
+  ln -s "$(readlink -f "$h2")" "$TMP/assemblies/$s.hap2.fa"
+  echo "$s" >> "$TMP/data/samples.txt"
+done < "$SAMPLES"
+abs() { readlink -f "$1"; }
+{
+  echo "# Written by kcp-init $(date '+%Y-%m-%d %H:%M'). Workflow: 1KCP-analysis $(cut -d' ' -f1 "${KCP_HOME:-/opt/1KCP-analysis}/COMMIT" 2>/dev/null)"
+  echo "grch38: \"$(abs "$GRCH38")\""
+  echo "chm13: \"$(abs "$CHM13")\""
+  if $PATCHES; then echo 'fa: "assemblies/{sample}.{haplotype}.fa"'
+  else echo 'fa: "../01_Assembly/results/{sample}/{sample}.{haplotype}.fasta"'; fi
+  if [ -n "$ANNO" ]; then echo "anno: \"$ANNO\""; else echo 'anno: "unused"'; fi
+  echo 'sample_list_file: "data/samples.txt"'
+  echo 'brnn_knm: "data/attcc-alpha.knm"'
+  if [ -n "$READS" ]; then
+    echo 'reads_tsv: "data/reads.tsv"'
+    echo 'sr_fq1: "unused"'; echo 'sr_fq2: "unused"'
+  else
+    echo "sr_fq1: \"$FQ1\""; echo "sr_fq2: \"$FQ2\""
+  fi
+  echo "annotate: $ANNOTATE"
+  echo "kmc_mem_gb: $KMCMEM"
+} > "$TMP/config.yaml"
+mv "$TMP" "$DIR" 2>/dev/null || { mkdir -p "$DIR"; cp -a "$TMP/." "$DIR/"; }
+trap - EXIT
+rm -rf "$TMP" 2>/dev/null || true
+echo "kcp-init: $n samples ($((2*n)) haplotypes) set up in $DIR"
+$PATCHES && echo "kcp-init: applied pgt patches: $(cd "$PATCHDIR" && ls *.patch | tr '\n' ' ')"
+echo "kcp-init: next:  cd $DIR && kcp-snakemake -j <cores> --keep-going"

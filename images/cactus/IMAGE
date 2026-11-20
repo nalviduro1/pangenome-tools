@@ -1,0 +1,3 @@
+# Cactus is used unmodified: the upstream release image, pinned by digest.
+image=quay.io/comparative-genomics-toolkit/cactus:v4.0.0
+digest=sha256:fb66c681fa7809c201c98c2fa1379c95620e9badf0423c8738c4fc90cc43696e

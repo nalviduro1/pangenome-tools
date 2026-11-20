@@ -1,0 +1,71 @@
+name: release
+# Builds the three images, tests them exactly as an admin would install them, and publishes a
+# GitHub release with the .sif files, the scripts tarball and SHA256SUMS.
+#   - Actions -> release -> "Run workflow" with "publish" ticked: build, test, then create the tag
+#     v<VERSION> and the release on the tested commit
+#   - the same without "publish": build and test only (assets kept as a workflow artifact for 3 days)
+#   - or push a tag v<VERSION> (the VERSION file must match) to build, test and publish
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish a release v<VERSION> if every test passes'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-test-release:
+    # 22.04: unprivileged user namespaces work out of the box (24.04 restricts them through AppArmor)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v=$(cat VERSION)
+          [ "${GITHUB_REF_NAME}" = "v$v" ] || { echo "tag ${GITHUB_REF_NAME} does not match VERSION $v"; exit 1; }
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          df -h /
+
+      - name: Install apptainer 1.5.0 and Environment Modules
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y environment-modules squashfs-tools
+          wget -q https://github.com/apptainer/apptainer/releases/download/v1.5.0/apptainer_1.5.0_amd64.deb
+          sudo apt-get install -y ./apptainer_1.5.0_amd64.deb
+          apptainer --version
+
+      - name: Build release assets
+        run: bash build/build-release.sh "$RUNNER_TEMP/release"
+
+      - name: Test as the admin would install it
+        run: bash build/test-release.sh "$RUNNER_TEMP/release" 4
+
+      - name: Keep the assets (runs that do not publish)
+        if: "!startsWith(github.ref, 'refs/tags/') && !inputs.publish"
+        uses: actions/upload-artifact@v4
+        with:
+          name: pangenome-tools-release
+          path: ${{ runner.temp }}/release/*
+          retention-days: 3
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(cat VERSION)
+          # --target: creates the tag on the tested commit when it does not exist yet (manual runs)
+          gh release create "v$v" --target "$GITHUB_SHA" --title "pangenome-tools $v" --notes-file ADMIN.md \
+             "$RUNNER_TEMP"/release/*.sif "$RUNNER_TEMP"/release/pangenome-tools-$v.tar.gz "$RUNNER_TEMP"/release/SHA256SUMS

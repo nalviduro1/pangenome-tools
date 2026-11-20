@@ -1,0 +1,122 @@
+#!/bin/bash
+# pangenome-tools-selftest [quick|full] [--workdir DIR] [--cores N] [--bsub] [--queue Q] [--group G] [--mem MB]
+#
+#   quick  every wrapper resolves to a command inside its image, and each key tool runs and reports
+#          the expected version (about 1 minute; fine on the login node, Cactus is SKIPPED there
+#          because the login node has no AVX2)
+#   full   quick, plus a real run of each image on small test data, with the output content checked:
+#            pangenome-analysis   14 tool tests (k-mer counting, SV matching, gene lift-over, gene graph, ...)
+#            1kcp-builder the whole 1KCP graph workflow on a 2-sample toy; every walk of the final
+#                         graphs must spell its input sequence exactly
+#            cactus       a 4-genome Minigraph-Cactus pangenome; every genome must be in the graph
+#                         and match its input FASTA
+#          about 10 minutes on 4 cores; needs a node with AVX2 (most compute nodes)
+#   --bsub submit the run to LSF instead (on an AVX2 node) and print how to read the result
+#
+# Prints one OK / FAIL / SKIP line per check and a total; exit status = number of failures.
+set -u
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+. "$HERE/etc/pgt.conf" || exit 2
+LEVEL=quick WORK= CORES=4 BSUB=false QUEUE=${PGT_LSF_QUEUE:-normal} GROUP=${PGT_LSF_GROUP:-} MEM=16000
+while [ $# -gt 0 ]; do
+  case "$1" in
+    quick|full) LEVEL=$1; shift;;
+    --workdir) WORK=$2; shift 2;;
+    --cores) CORES=$2; shift 2;;
+    --bsub) BSUB=true; shift;;
+    --queue) QUEUE=$2; shift 2;;
+    --group) GROUP=$2; shift 2;;
+    --mem) MEM=$2; shift 2;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) echo "unknown option $1" >&2; exit 2;;
+  esac
+done
+WORK=${WORK:-$PWD/pgt-selftest-$(date +%Y%m%d-%H%M%S)}
+
+if $BSUB; then
+  command -v bsub >/dev/null || { echo "bsub not found" >&2; exit 2; }
+  mkdir -p "$WORK" || exit 2
+  WORK=$(cd "$WORK" && pwd)
+  cmd="$HERE/libexec/pgt-selftest $LEVEL --workdir $WORK/run --cores $CORES"
+  grp=(); [ -n "$GROUP" ] && grp=(-G "$GROUP")   # some LSF sites require a group (-G)
+  # -R sections in LSF's order: select[] rusage[] span[]
+  bsub -J pgt-selftest -q "$QUEUE" ${grp[@]+"${grp[@]}"} -n "$CORES" -M "$MEM" \
+       -R "select[avx2] rusage[mem=$MEM] span[hosts=1]" \
+       -cwd "$WORK" -oo "$WORK/selftest.out" -eo "$WORK/selftest.err" "$cmd" || exit 2
+  echo "Submitted. When it finishes:  grep -E '^(OK|FAIL|SKIP)|failure' $WORK/selftest.out"
+  exit 0
+fi
+
+mkdir -p "$WORK" || exit 2
+WORK=$(cd "$WORK" && pwd)
+X="$HERE/libexec/pgt-exec"
+T="$HERE/share/tests"
+fails=0 skips=0
+line() { printf '%-5s %-22s %s\n' "$1" "$2" "$3"; case $1 in FAIL) fails=$((fails+1));; SKIP) skips=$((skips+1));; esac; }
+avx2=true; grep -qw avx2 /proc/cpuinfo || avx2=false
+quiet() { grep -vE '^(INFO|VERBOSE): ' || true; }   # apptainer's own progress lines are not tool output
+
+echo "pangenome-tools $PGT_VERSION selftest ($LEVEL) on $(hostname -s), $(date '+%F %T'), workdir $WORK"
+echo "apptainer: $("$PGT_APPTAINER" --version 2>&1 | head -1)"
+
+# ---- quick: wrappers resolve, key tools run and report their version -------------------------------
+for img in analysis kcp cactus; do
+  tsv="$HERE/share/tools/$img.tsv"
+  if [ "$img" = cactus ] && ! $avx2; then
+    line SKIP cactus "no AVX2 on $(hostname -s); run 'full' (or --bsub) on a compute node"; continue
+  fi
+  # one container start per image: list which wrapped commands exist inside it
+  want=$(awk -F'\t' '!/^#/ && $2!="*"{print $2}' "$tsv" | sort -u | tr '\n' ' ')
+  missing=$("$X" "$img" bash -c 'for c in "$@"; do command -v "$c" >/dev/null || printf "%s " "$c"; done; echo END' _ $want 2>&1 | quiet)
+  case "$missing" in *END) missing=${missing%END};; *) missing="(the image did not run: $missing)";; esac
+  missing=$(echo $missing)
+  n=$(echo $want | wc -w)
+  if [ -z "$missing" ]; then line OK "$img-commands" "all $n wrapped commands are present in the image"
+  else line FAIL "$img-commands" "missing in image: $missing"; fi
+  while IFS=$'\t' read -r w c chk exp; do
+    case "$w" in \#*|'') continue;; esac
+    [ "$chk" = - ] && continue
+    out=$("$X" "$img" bash -c "$chk" 2>&1 | quiet)
+    if printf '%s' "$out" | grep -qF -- "$exp"; then line OK "$w" "$exp"
+    elif ! $avx2 && printf '%s' "$out" | grep -q 'pangenome-tools: illegal instruction'; then
+      line SKIP "$w" "needs AVX2, which $(hostname -s) lacks; the full selftest on a compute node covers it"
+    else line FAIL "$w" "expected '$exp', got: $(printf '%s' "$out" | head -2 | tr '\n' ' ' | cut -c1-100)"; fi
+  done < "$tsv"
+done
+
+# ---- full: real runs with content checks ----------------------------------------------------------------
+if [ "$LEVEL" = full ]; then
+  echo "--- pangenome-analysis functional tests"
+  out=$("$X" analysis bash "$T/analysis.sh" "$WORK/analysis" 2>&1); echo "$out" | grep -E '^(OK|FAIL)'
+  f=$(echo "$out" | grep -c '^FAIL'); fails=$((fails+f))
+  echo "$out" | grep -q 'pangenome-analysis: 0 failure' || [ "$f" -gt 0 ] || line FAIL analysis-tests "did not finish: $(echo "$out" | tail -2 | tr '\n' ' ')"
+
+  echo "--- 1kcp-builder: whole workflow on the toy data"
+  K="$WORK/kcp"; rm -rf "$K"; mkdir -p "$K"
+  if "$X" kcp python3 "$T/make_toy.py" "$K/toy" > "$K/make_toy.log" 2>&1 &&
+     (cd "$K" && "$X" kcp kcp-init run --grch38 toy/GRCh38.fa --chm13 toy/CHM13.fa --samples toy/samples.tsv \
+          --reads toy/reads.tsv --kmc-mem 4) > "$K/kcp-init.log" 2>&1; then
+    line OK kcp-init "toy run directory set up ($K/run)"
+    if (cd "$K/run" && "$X" kcp snakemake -j "$CORES" --keep-going) > "$K/snakemake.log" 2>&1; then
+      line OK kcp-snakemake "$(grep -o '[0-9]* of [0-9]* steps (100%) done' "$K/snakemake.log" | tail -1)"
+    else
+      line FAIL kcp-snakemake "see $K/snakemake.log: $(grep -m1 -E 'Error in rule|Exception' "$K/snakemake.log")"
+    fi
+    out=$("$X" kcp python3 "$T/kcp_check.py" "$K/run" "$K/toy" 2>&1); echo "$out" | grep -E '^(OK|FAIL)'
+    f=$(echo "$out" | grep -c '^FAIL'); fails=$((fails+f))
+    echo "$out" | grep -q 'kcp-toy-check: 0 failure' || [ "$f" -gt 0 ] || line FAIL kcp-check "did not finish: $(echo "$out" | tail -2 | tr '\n' ' ')"
+  else
+    line FAIL kcp-init "see $K/make_toy.log and $K/kcp-init.log"
+  fi
+
+  echo "--- cactus $PGT_CACTUS_VERSION: 4-genome pangenome"
+  if $avx2; then
+    out=$("$X" cactus bash "$T/cactus.sh" "$WORK/cactus" "$T/data" "$CORES" 2>&1); echo "$out" | grep -E '^(OK|FAIL)'
+    f=$(echo "$out" | grep -c '^FAIL'); fails=$((fails+f))
+    echo "$out" | grep -q 'cactus: 0 failure' || [ "$f" -gt 0 ] || line FAIL cactus-test "did not finish: $(echo "$out" | tail -2 | tr '\n' ' ')"
+  else
+    line SKIP cactus-test "no AVX2 on $(hostname -s)"
+  fi
+fi
+echo "pangenome-tools selftest ($LEVEL): $fails failure(s), $skips skipped"
+exit $fails

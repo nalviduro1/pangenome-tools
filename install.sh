@@ -1,0 +1,209 @@
+#!/bin/bash
+# install.sh -- install pangenome-tools (Cactus 4.0.0, the 1KCP graph builder, the pangenome analysis tools)
+# as three environment modules backed by apptainer images.
+#
+#   bash install.sh --prefix DIR --modulefiles DIR [options]
+#
+#   --prefix DIR        where the images and wrappers go; the release is installed in DIR/<version>
+#                       (e.g. /opt/tools/pangenome-tools)
+#   --modulefiles DIR   a directory on MODULEPATH (e.g. /opt/modulefiles); writes
+#                         cactus/4.0.0   1kcp-builder/<version>   pangenome-analysis/<version>
+#   --sif-dir DIR       where the downloaded .sif files and SHA256SUMS are (default: the directory
+#                       that holds this release's folder, i.e. where the tarball was unpacked)
+#   --apptainer PATH    apptainer binary (default: the one on PATH); recorded in the wrappers
+#   --binds "A B ..."   host paths bound into the containers when they exist on the node
+#                       (default: "/home /data /scratch"; list your cluster's shared file systems)
+#   --cactus-default    make cactus/4.0.0 the default 'cactus' module. Without it, the current
+#                       default (an older cactus/<version>) is kept by writing cactus/.version, and users
+#                       get 4.0.0 with 'module load cactus/4.0.0'.
+#   --force             replace an existing install of this version
+#
+# The script changes nothing until every check has passed: it verifies the checksums, runs each
+# image, builds the install in a temporary folder, runs the quick selftest from there, and only then
+# moves it and the modulefiles into place. It ends by printing the command for the full selftest.
+set -euo pipefail
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+VERSION=$(cat "$HERE/VERSION")
+CACTUS_VERSION=4.0.0
+PREFIX= MODDIR= SIFDIR=$(dirname "$HERE") APPT= BINDS="/home /data /scratch"
+CACTUS_DEFAULT=false FORCE=false
+die()  { echo "install.sh: ERROR: $*" >&2; exit 1; }
+step() { echo "== $*"; }
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --prefix) PREFIX=$2; shift 2;;
+    --modulefiles) MODDIR=$2; shift 2;;
+    --sif-dir) SIFDIR=$2; shift 2;;
+    --apptainer) APPT=$2; shift 2;;
+    --binds) BINDS=$2; shift 2;;
+    --cactus-default) CACTUS_DEFAULT=true; shift;;
+    --force) FORCE=true; shift;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) die "unknown option: $1 (see --help)";;
+  esac
+done
+[ -n "$PREFIX" ] || die "--prefix is required"
+[ -n "$MODDIR" ] || die "--modulefiles is required"
+PREFIX=$(readlink -m "$PREFIX"); MODDIR=$(readlink -m "$MODDIR"); SIFDIR=$(readlink -m "$SIFDIR")
+DEST="$PREFIX/$VERSION"
+SIFS="cactus-$CACTUS_VERSION.sif 1kcp-builder-$VERSION.sif pangenome-analysis-$VERSION.sif"
+
+step "pangenome-tools $VERSION: checking"
+# 1. apptainer must RUN (a path on PATH is not enough)
+if [ -z "$APPT" ]; then APPT=$(command -v apptainer || command -v singularity || true); fi
+[ -n "$APPT" ] || die "no apptainer on PATH; load it (module load apptainer) or pass --apptainer PATH"
+APPT=$(readlink -f "$APPT")
+av=$("$APPT" --version 2>&1) || die "$APPT --version failed: $av"
+echo "   apptainer: $APPT ($av)"
+
+# 2. checksums of the images
+[ -r "$SIFDIR/SHA256SUMS" ] || die "no SHA256SUMS in $SIFDIR (use --sif-dir)"
+for s in $SIFS; do [ -r "$SIFDIR/$s" ] || die "missing $SIFDIR/$s"; done
+(cd "$SIFDIR" && grep -E " \*?($(echo $SIFS | sed 's/ /|/g; s/\./\\./g'))\$" SHA256SUMS | sha256sum -c --quiet -) \
+  || die "checksum mismatch in $SIFDIR -- re-download the file(s) named above"
+echo "   checksums: OK ($SIFS)"
+
+# 3. targets
+[ -d "$MODDIR" ] && [ -w "$MODDIR" ] || die "modulefile directory $MODDIR does not exist or is not writable"
+mkdir -p "$PREFIX" || die "cannot create $PREFIX"
+[ -w "$PREFIX" ] || die "$PREFIX is not writable"
+if [ -e "$DEST" ]; then $FORCE || die "$DEST exists (use --force to replace it)"; fi
+for m in "cactus/$CACTUS_VERSION" "1kcp-builder/$VERSION" "pangenome-analysis/$VERSION"; do
+  if [ -e "$MODDIR/$m" ] && ! $FORCE; then
+    grep -q 'pangenome-tools' "$MODDIR/$m" 2>/dev/null || die "$MODDIR/$m exists and was not written by this installer"
+    die "$MODDIR/$m exists (use --force to replace it)"
+  fi
+done
+
+# 4. build the install in a temporary folder next to its final place
+TMP="$PREFIX/.install-$VERSION.$$"
+cleanup() { rm -rf "$TMP" "$MODDIR"/.pgt-tmp.$$ 2>/dev/null || true; }
+trap cleanup EXIT
+mkdir -p "$TMP"/{sif,bin/cactus,bin/kcp,bin/analysis,libexec,etc,share}
+step "copying images to $DEST/sif (about 1.7 GB)"
+for s in $SIFS; do cp "$SIFDIR/$s" "$TMP/sif/$s"; done
+(cd "$TMP/sif" && grep -E " \*?($(echo $SIFS | sed 's/ /|/g; s/\./\\./g'))\$" "$SIFDIR/SHA256SUMS" | sha256sum -c --quiet -) \
+  || die "copied images do not match their checksums (disk full?)"
+cp "$HERE/libexec/pgt-exec" "$HERE/libexec/pgt-selftest" "$TMP/libexec/"
+cp -r "$HERE/tests" "$TMP/share/tests"; cp -r "$HERE/tools" "$TMP/share/tools"
+cp "$HERE/README.md" "$HERE/VERSION" "$TMP/"
+cat > "$TMP/etc/pgt.conf" <<EOF
+# written by install.sh $(date '+%F %T') -- edit PGT_APPTAINER or PGT_BINDS_DEFAULT here if they change
+PGT_VERSION="$VERSION"
+PGT_CACTUS_VERSION="$CACTUS_VERSION"
+PGT_APPTAINER="$APPT"
+PGT_BINDS_DEFAULT="$BINDS"
+PGT_CACTUS_SIF="$DEST/sif/cactus-$CACTUS_VERSION.sif"
+PGT_KCP_SIF="$DEST/sif/1kcp-builder-$VERSION.sif"
+PGT_ANALYSIS_SIF="$DEST/sif/pangenome-analysis-$VERSION.sif"
+EOF
+# while testing from TMP, point the config at the TMP images; rewritten below before the move
+sed "s#$DEST/sif#$TMP/sif#" "$TMP/etc/pgt.conf" > "$TMP/etc/pgt.conf.test"
+cp "$TMP/etc/pgt.conf" "$TMP/etc/pgt.conf.final"; cp "$TMP/etc/pgt.conf.test" "$TMP/etc/pgt.conf"
+
+step "writing wrappers"
+nwrap=0
+for img in cactus kcp analysis; do
+  while IFS=$'\t' read -r w c chk exp; do
+    case "$w" in \#*|'') continue;; esac
+    f="$TMP/bin/$img/$w"
+    if [ "$c" = '*' ]; then
+      printf '#!/bin/bash\n# pangenome-tools %s: run any command inside the %s image\nexec "%s/libexec/pgt-exec" %s "$@"\n' "$VERSION" "$img" "$DEST" "$img" > "$f"
+    else
+      printf '#!/bin/bash\n# pangenome-tools %s: %s inside the %s image\nexec "%s/libexec/pgt-exec" %s %s "$@"\n' "$VERSION" "$c" "$img" "$DEST" "$img" "$c" > "$f"
+    fi
+    nwrap=$((nwrap+1))
+  done < "$HERE/tools/$img.tsv"
+  ln -s "$DEST/libexec/pgt-selftest" "$TMP/bin/$img/pangenome-tools-selftest"
+done
+find "$TMP/bin" "$TMP/libexec" -type f -exec chmod 755 {} +
+echo "   $nwrap wrappers"
+
+step "running each image"
+for s in $SIFS; do
+  o=$("$APPT" exec ${PGT_EXEC_OPTS:-} --cleanenv "$TMP/sif/$s" true 2>&1) || die "apptainer cannot run $s: $o"
+done
+echo "   all 3 images start"
+
+step "quick selftest (from the temporary folder)"
+# the wrappers point at $DEST, which does not exist yet: test through libexec directly
+qs="$TMP/qs"; mkdir -p "$qs"
+if ! "$TMP/libexec/pgt-selftest" quick --workdir "$qs" | tee "$TMP/selftest-quick.txt" | grep -E '^(OK|FAIL|SKIP)|failure'; then
+  die "quick selftest failed -- nothing was installed (details above)"
+fi
+rm -rf "$qs"
+mv "$TMP/etc/pgt.conf.final" "$TMP/etc/pgt.conf"; rm -f "$TMP/etc/pgt.conf.test"
+
+step "writing modulefiles"
+MT="$MODDIR/.pgt-tmp.$$"; mkdir -p "$MT"
+modfile() { # name version bindir whatis help
+  cat <<EOF
+#%Module1.0
+## written by pangenome-tools install.sh $VERSION, $(date '+%F')
+proc ModulesHelp { } {
+  puts stderr "$5"
+  puts stderr ""
+  puts stderr "Commands: ls $3"
+  puts stderr "Selftest: pangenome-tools-selftest quick   (or: full --bsub; see --help)"
+  puts stderr "Docs:     $DEST/README.md"
+}
+module-whatis "$4"
+conflict $1
+prepend-path PATH $3
+EOF
+}
+modfile cactus "$CACTUS_VERSION" "$DEST/bin/cactus" \
+  "Minigraph-Cactus $CACTUS_VERSION (upstream image) with vg 1.78, minigraph, odgi, GFAffix, HAL tools, samtools, bcftools, minimap2" \
+  "Cactus $CACTUS_VERSION, unmodified upstream container. Needs a node with AVX2 (not the login node)." > "$MT/cactus"
+modfile 1kcp-builder "$VERSION" "$DEST/bin/kcp" \
+  "1KCP graph builder (JianYang-Lab/1KCP-analysis 02_Pangenome) with its pinned tools: kcp-init, kcp-snakemake, ..." \
+  "1KCP pangenome graph builder. Start with: kcp-init --help" > "$MT/1kcp"
+modfile pangenome-analysis "$VERSION" "$DEST/bin/analysis" \
+  "Pangenome analysis tools: truvari, kmc, liftoff, miniprot, pangene, rustybam, seqtk, whatshap, rfmix, leiden" \
+  "Pangenome analysis tools. Python with igraph/leidenalg: pga-python" > "$MT/analysis"
+for m in cactus 1kcp-builder pangenome-analysis; do mkdir -p "$MODDIR/$m"; done
+
+# keep the current default 'cactus' unless asked otherwise (Modules picks the highest version otherwise)
+note=""
+if ! $CACTUS_DEFAULT; then
+  if [ ! -e "$MODDIR/cactus/.version" ] && [ ! -e "$MODDIR/cactus/.modulerc" ]; then
+    others=$(cd "$MODDIR/cactus" && ls -1 | grep -vx "$CACTUS_VERSION" | sort -V | tail -1 || true)
+    if [ -n "$others" ]; then
+      printf '#%%Module1.0\n## written by pangenome-tools install.sh: keeps the default when cactus/%s was added\nset ModulesVersion "%s"\n' "$CACTUS_VERSION" "$others" > "$MT/cactus.version"
+      note="cactus default kept at $others (wrote $MODDIR/cactus/.version)"
+    fi
+  else
+    note="cactus default unchanged ($MODDIR/cactus/.version or .modulerc already present)"
+  fi
+else
+  [ -e "$MODDIR/cactus/.version" ] && cp -p "$MODDIR/cactus/.version" "$MODDIR/cactus/.version.before-pgt-$VERSION"
+  printf '#%%Module1.0\nset ModulesVersion "%s"\n' "$CACTUS_VERSION" > "$MT/cactus.version"
+  note="cactus default is now $CACTUS_VERSION"
+fi
+
+step "moving into place"
+if [ -e "$DEST" ]; then rm -rf "$DEST.old.$$"; mv "$DEST" "$DEST.old.$$"; fi
+mv "$TMP" "$DEST"
+rm -rf "$DEST.old.$$" 2>/dev/null || true
+mv "$MT/cactus" "$MODDIR/cactus/$CACTUS_VERSION"
+mv "$MT/1kcp" "$MODDIR/1kcp-builder/$VERSION"
+mv "$MT/analysis" "$MODDIR/pangenome-analysis/$VERSION"
+[ -e "$MT/cactus.version" ] && mv "$MT/cactus.version" "$MODDIR/cactus/.version"
+rmdir "$MT"
+chmod -R a+rX "$DEST" "$MODDIR/cactus" "$MODDIR/1kcp-builder" "$MODDIR/pangenome-analysis"
+trap - EXIT
+
+cat <<EOF
+
+Installed pangenome-tools $VERSION in $DEST
+Modules:  cactus/$CACTUS_VERSION   1kcp-builder/$VERSION   pangenome-analysis/$VERSION
+${note:+         $note
+}
+Last step -- the full selftest on a compute node (about 10 minutes, 4 cores):
+
+  module load pangenome-analysis/$VERSION
+  pangenome-tools-selftest full --bsub --workdir <a scratch folder>   # --group/--queue if needed
+
+then:  grep -E '^(OK|FAIL|SKIP)|failure' <that folder>/selftest.out
+It must end with "0 failure(s), 0 skipped".
+EOF
