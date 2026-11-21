@@ -6,6 +6,7 @@
 #   PGT_BINDS          extra bind paths, space-separated (src or src:dst), added to the defaults
 #   PGT_ENV            extra variables for the container, comma-separated NAME=value
 #   PGT_EXEC_OPTS      extra options for apptainer exec (e.g. --nv)
+#   PGT_QUIET=0        show apptainer's own INFO messages (hidden by default; its warnings and errors always show)
 set -u
 HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 # shellcheck source=/dev/null
@@ -46,16 +47,18 @@ t=${TMPDIR:-/tmp}
 [ -d "$t" ] && [ -w "$t" ] || t=/tmp
 case "$t" in /tmp|/tmp/*) ;; *) args+=(-B "$t") ;; esac
 envs="TMPDIR=$t,PYTHONNOUSERSITE=1"
+# apptainer prints INFO lines (e.g. "squashfuse not found") before every command; --quiet hides only those
+q=--quiet; [ "${PGT_QUIET:-1}" = 0 ] && q=
 [ -n "${OMP_NUM_THREADS:-}" ] && envs="$envs,OMP_NUM_THREADS=$OMP_NUM_THREADS"
 [ -n "${PGT_ENV:-}" ] && envs="$envs,$PGT_ENV"
 if grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
   # shellcheck disable=SC2086
-  exec "$PGT_APPTAINER" exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" ${args[@]+"${args[@]}"} "$sif" "$@"
+  exec "$PGT_APPTAINER" $q exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" ${args[@]+"${args[@]}"} "$sif" "$@"
 fi
 # A node without AVX2 (e.g. an older login node): the tools are built for plain x86-64, but some libraries
 # may still use AVX2 instructions. If one does, say so instead of leaving a bare "Illegal instruction".
 # shellcheck disable=SC2086
-"$PGT_APPTAINER" exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" ${args[@]+"${args[@]}"} "$sif" "$@"
+"$PGT_APPTAINER" $q exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" ${args[@]+"${args[@]}"} "$sif" "$@"
 rc=$?
 if [ $rc -eq 132 ]; then
   echo "pangenome-tools: illegal instruction: '$1' needs AVX2, which $(hostname -s) does not have. Run it on a compute node." >&2

@@ -94,6 +94,16 @@ echo "   checksums: OK ($SIFS)"
 
 # 3. targets
 [ -d "$MODDIR" ] && [ -w "$MODDIR" ] || die "modulefile directory $MODDIR does not exist or is not writable"
+# remember the highest folder this run creates, so that a failed check leaves nothing behind
+NEWDIR=; d=$PREFIX; while [ ! -e "$d" ]; do NEWDIR=$d; d=$(dirname "$d"); done
+TMP=
+cleanup() {
+  rm -rf "${TMP:-/nonexistent}" "$MODDIR"/.pgt-tmp.$$ 2>/dev/null || true
+  if [ -n "$NEWDIR" ]; then
+    d=$PREFIX; while rmdir "$d" 2>/dev/null && [ "$d" != "$NEWDIR" ]; do d=$(dirname "$d"); done
+  fi
+}
+trap cleanup EXIT
 mkdir -p "$PREFIX" || die "cannot create $PREFIX"
 [ -w "$PREFIX" ] || die "$PREFIX is not writable"
 if [ -e "$DEST" ]; then $FORCE || die "$DEST exists (use --force to replace it)"; fi
@@ -104,6 +114,11 @@ for m in "cactus/$CACTUS_VERSION" "1kcp-builder/$VERSION" "pangenome-analysis/$V
     $FORCE || die "$MODDIR/$m exists and was not written by this installer (use --force to replace it)"
   elif grep -qF "$DEST/" "$MODDIR/$m"; then
     $FORCE || die "$MODDIR/$m exists (use --force to replace it)"
+  elif [ "$(sed -n 's/^## written by pangenome-tools install.sh \([^,]*\),.*/\1/p' "$MODDIR/$m")" = "$VERSION" ]; then
+    # the same release installed under another --prefix: re-pointing it would silently move users off it
+    $FORCE || die "$MODDIR/$m already points at release $VERSION in another folder
+       ($(sed -n 's/^prepend-path PATH //p' "$MODDIR/$m")). Use that --prefix, another --modulefiles folder,
+       or --force to point it at $DEST."
   else
     # written by another pangenome-tools release (an upgrade): it will point at this release
     replaced="$replaced $m"
@@ -173,8 +188,6 @@ fi
 
 # 7. build the install in a temporary folder next to its final place
 TMP="$PREFIX/.install-$VERSION.$$"
-cleanup() { rm -rf "$TMP" "$MODDIR"/.pgt-tmp.$$ 2>/dev/null || true; }
-trap cleanup EXIT
 mkdir -p "$TMP"/{sif,bin/cactus,bin/kcp,bin/analysis,libexec,etc,share}
 step "copying images to $DEST/sif (about 1.6 GB)"
 for s in $SIFS; do cp "$SIFDIR/$s" "$TMP/sif/$s"; done
@@ -234,6 +247,8 @@ if ! "${CLEAN[@]}" "$TMP/libexec/pgt-selftest" quick --workdir "$qs" | tee "$TMP
   die "quick selftest failed -- nothing was installed (details above)"
 fi
 rm -rf "$qs"
+if [ -n "$GROUP" ]; then chgrp "$GROUP" "$TMP/selftest-quick.txt"; fi
+chmod a+r "$TMP/selftest-quick.txt"
 mv "$TMP/etc/pgt.conf.final" "$TMP/etc/pgt.conf"; rm -f "$TMP/etc/pgt.conf.test"
 
 step "writing modulefiles"

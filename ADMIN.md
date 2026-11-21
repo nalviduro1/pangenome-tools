@@ -104,4 +104,4 @@ image and checks that the output sequence matches the input exactly.
 
 - **If apptainer moves**, edit `PGT_APPTAINER` (and `PGT_APPTAINER_LD_LIBRARY_PATH`, if set) in `etc/pgt.conf` and run the selftest again.
 - **To uninstall**, remove the version folder and the three modulefiles. Also remove
-  `cactus/.version` if the installer wrote it; its first comment line says so.
+  `cactus/.version` if the installer wrote it; its second line says so.

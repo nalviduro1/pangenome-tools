@@ -41,6 +41,8 @@ Without it, odgi aborts with "double free or corruption".
 - **The container environment is clean.** Your shell's variables (conda, PYTHONPATH, ...) do not
   leak into the tools. `TMPDIR` and `OMP_NUM_THREADS` are passed through. Add others with
   `export PGT_ENV="NAME=value,NAME2=value2"`.
+- **Apptainer's own INFO lines are hidden.** Its warnings and errors still show. To see the INFO lines too,
+  run `export PGT_QUIET=0`.
 - **Jobs run inside the container on one node.** Cactus (Toil `single_machine`) and the 1KCP
   Snakemake workflow cannot call `bsub` from inside the container. Submit the whole run as one LSF
   job on a large node, and give it the node's cores (`--maxCores N`, `kcp-snakemake -j N`).
