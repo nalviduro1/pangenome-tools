@@ -1,0 +1,66 @@
+#!/bin/bash
+# pgt-exec IMAGE COMMAND [ARGS...]
+# Runs COMMAND inside one of the pangenome-tools images (cactus | kcp | analysis) with apptainer.
+# Every wrapper on the module PATH is a one-line call to this script. Settings come from
+# ../etc/pgt.conf, written by install.sh. Per-user knobs (all optional):
+#   PGT_BINDS          extra bind paths, space-separated (src or src:dst), added to the defaults
+#   PGT_ENV            extra variables for the container, comma-separated NAME=value
+#   PGT_EXEC_OPTS      extra options for apptainer exec (e.g. --nv)
+#   PGT_QUIET=0        show apptainer's own INFO messages (hidden by default; its warnings and errors always show)
+set -u
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+# shellcheck source=/dev/null
+. "$HERE/etc/pgt.conf" || { echo "pangenome-tools: cannot read $HERE/etc/pgt.conf" >&2; exit 2; }
+# apptainer built against libraries in its own folder: the installer records that folder (host side only;
+# --cleanenv keeps it out of the container)
+if [ -n "${PGT_APPTAINER_LD_LIBRARY_PATH:-}" ]; then
+  export LD_LIBRARY_PATH="$PGT_APPTAINER_LD_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+# an apptainer module may set APPTAINERENV_* (e.g. APPTAINERENV_LD_LIBRARY_PATH), which --cleanenv still passes
+# into the container and which can make the tools load host libraries. Use PGT_ENV instead.
+for v in $(compgen -e | grep -E '^(APPTAINER|SINGULARITY)ENV_' || true); do unset "$v"; done
+[ $# -ge 2 ] || { echo "usage: pgt-exec cactus|kcp|analysis COMMAND [ARGS...]" >&2; exit 2; }
+img=$1; shift
+case "$img" in
+  cactus) sif=$PGT_CACTUS_SIF; label="cactus/$PGT_CACTUS_VERSION" ;;
+  kcp)    sif=$PGT_KCP_SIF;    label="1kcp-builder/$PGT_VERSION" ;;
+  analysis)   sif=$PGT_ANALYSIS_SIF;   label="pangenome-analysis/$PGT_VERSION" ;;
+  *) echo "pgt-exec: unknown image '$img'" >&2; exit 2 ;;
+esac
+[ -r "$sif" ] || { echo "$label: image not readable: $sif" >&2; exit 2; }
+if [ "$img" = cactus ] && ! grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
+  cat >&2 <<EOF
+$label: this node ($(hostname -s)) has no AVX2. Cactus 4.0.0 is built for x86-64-v3 and will crash here.
+Run it inside a job on a compute node with AVX2 (on LSF, e.g. -R "select[avx2]" before any
+rusage[] in the -R string).
+EOF
+  exit 3
+fi
+args=()
+for b in $PGT_BINDS_DEFAULT ${PGT_BINDS:-}; do
+  # the Cactus image keeps its programs in /home/cactus: binding all of /home would hide them.
+  # Your own home folder is still mounted by apptainer itself.
+  [ "$img" = cactus ] && [ "${b%%:*}" = /home ] && continue
+  [ -e "${b%%:*}" ] && args+=(-B "$b")
+done
+t=${TMPDIR:-/tmp}
+[ -d "$t" ] && [ -w "$t" ] || t=/tmp
+case "$t" in /tmp|/tmp/*) ;; *) args+=(-B "$t") ;; esac
+envs="TMPDIR=$t,PYTHONNOUSERSITE=1"
+# apptainer prints INFO lines (e.g. "squashfuse not found") before every command; --quiet hides only those
+q=--quiet; [ "${PGT_QUIET:-1}" = 0 ] && q=
+[ -n "${OMP_NUM_THREADS:-}" ] && envs="$envs,OMP_NUM_THREADS=$OMP_NUM_THREADS"
+[ -n "${PGT_ENV:-}" ] && envs="$envs,$PGT_ENV"
+if grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
+  # shellcheck disable=SC2086
+  exec "$PGT_APPTAINER" $q exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" ${args[@]+"${args[@]}"} "$sif" "$@"
+fi
+# A node without AVX2 (e.g. an older login node): the tools are built for plain x86-64, but some libraries
+# may still use AVX2 instructions. If one does, say so instead of leaving a bare "Illegal instruction".
+# shellcheck disable=SC2086
+"$PGT_APPTAINER" $q exec ${PGT_EXEC_OPTS:-} --cleanenv --env "$envs" ${args[@]+"${args[@]}"} "$sif" "$@"
+rc=$?
+if [ $rc -eq 132 ]; then
+  echo "pangenome-tools: illegal instruction: '$1' needs AVX2, which $(hostname -s) does not have. Run it on a compute node." >&2
+fi
+exit $rc

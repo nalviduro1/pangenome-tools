@@ -1,0 +1,42 @@
+--- a/rules/graph_filtering.smk	2026-11-20 11:38:24.497657118 -0500
++++ b/rules/graph_filtering.smk	2026-11-20 14:39:55.421944569 -0500
+@@ -82,11 +82,27 @@
+             python3 scripts/gfa_bed_filter.py {input.gfaffix_gfa} {output.merge_filter_bed} CHM13,GRCh38,_MINIGRAPH_ {output.clip_gfa}
+         """
+ 
++# pgt patch 02: read k-mers from any read files listed per sample in config['reads_tsv']
++# (sample<TAB>path, one line per file, e.g. HiFi fastq). Without reads_tsv the original
++# Illumina R1/R2 inputs are used unchanged.
++def kmer_reads(wildcards):
++    tsv = config.get('reads_tsv')
++    if not tsv:
++        return [config['sr_fq1'].format(sample=wildcards.sample), config['sr_fq2'].format(sample=wildcards.sample)]
++    files = []
++    with open(tsv) as fh:
++        for line in fh:
++            f = line.rstrip('\n').split('\t')
++            if len(f) >= 2 and f[0] == wildcards.sample and f[1]:
++                files.append(f[1])
++    if not files:
++        raise ValueError('reads_tsv lists no read files for sample ' + wildcards.sample)
++    return files
++
+ #Rule: kmc generating sample kmer
+ rule sample_kmer:
+     input:
+-        fq1=config['sr_fq1'],
+-        fq2=config['sr_fq2']
++        reads=kmer_reads
+     output:
+         file='results/kmc/{sample}.read',
+         histo=temp('results/kmc/{sample}.kmer.histo'),
+@@ -104,8 +120,7 @@
+     threads: 4
+     shell:
+         """
+-            echo {input.fq1} > {output.file}
+-            echo {input.fq2} >> {output.file}
++            printf '%s\\n' {input.reads} > {output.file}
+             mkdir -p {params.kmc_tmp}
+             kmc -k29 -m20 -t{threads} -hp -ci1 -cs10000 @{output.file} {params.prefix} {params.kmc_tmp}
+             kmc_tools transform {params.prefix} histogram {output.histo} -cx10000

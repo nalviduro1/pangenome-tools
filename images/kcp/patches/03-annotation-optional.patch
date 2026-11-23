@@ -1,0 +1,26 @@
+--- a/Snakefile	2026-11-20 11:38:24.497382641 -0500
++++ b/Snakefile	2026-11-20 14:40:09.204764222 -0500
+@@ -12,6 +12,10 @@
+     sample='|'.join(samples_list),
+     haplotype='hap1|hap2'
+ 
++# pgt patch 03: config 'annotate: false' builds and filters the graph without the node annotation
++# (which needs per-assembly annotation BEDs). Default true = original behaviour.
++ANNOTATE = str(config.get('annotate', True)).lower() not in ('false', '0', 'no')
++
+ rule all:
+     input:
+         gfas=lambda wildcards: expand(
+@@ -19,8 +23,8 @@
+             id=glob_wildcards(f"{checkpoints.minigraph_aln_partition.get(**wildcards).output[0]}/minigraph_{{id}}.gfa").id
+         ),
+         ref="results/gfa_grch38.list",
+-        node_annos=lambda wildcards: expand(
++        node_annos=lambda wildcards: [] if not ANNOTATE else expand(
+             "results/subgraph/subgraph_{id}/minigraph_{id}.seqwish.smoothxg.gfaffix.clip.kmer.chop.ids.node.anno",
+             id=glob_wildcards(f"{checkpoints.minigraph_aln_partition.get(**wildcards).output[0]}/minigraph_{{id}}.gfa").id
+         ),
+-        anno="results/merge.seqwish.smoothxg.gfaffix.clip.kmer.chop.ids.node.anno"
+\ No newline at end of file
++        anno=(["results/merge.seqwish.smoothxg.gfaffix.clip.kmer.chop.ids.node.anno"] if ANNOTATE else [])
+\ No newline at end of file

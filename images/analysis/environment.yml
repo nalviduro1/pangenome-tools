@@ -1,0 +1,25 @@
+# Pangenome analysis tools not provided by the Cactus image.
+name: analysis
+channels: [conda-forge, bioconda]
+dependencies:
+  - python=3.11
+  - truvari=4.2.2
+  - kmc=3.2.4
+  - liftoff
+  - pangene
+  - miniprot
+  - k8
+  - minimap2          # needed by liftoff and paftools.js; not exposed as a command (the cactus module provides it)
+  - rustybam
+  - seqtk
+  - whatshap
+  - rfmix
+  - python-igraph
+  - leidenalg
+  - python-edlib
+  - numpy
+  - scipy
+  - pandas
+  - samtools          # internal use only
+  - bcftools          # internal use only
+  - bedtools          # internal use only

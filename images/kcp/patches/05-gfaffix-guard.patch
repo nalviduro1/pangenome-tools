@@ -1,0 +1,11 @@
+--- a/rules/graph_construction.smk	2026-11-20 15:04:09.777635288 -0500
++++ b/rules/graph_construction.smk	2026-11-20 15:04:09.761401350 -0500
+@@ -297,5 +297,8 @@
+         """
+             gfaffix {input.smoothxg_gfa} | vg convert -fg - | \
+             awk -v OFS='\\t' '{{if(substr($0,1,1)=="W" && $2!="_MINIGRAPH_") {{split($4,a,":");split(a[2],b,"-");print$1,$2,$3,a[1],$5+b[1]-1,$6+b[1]-1,$7}} else print$0 }}' > {output.gfaffix_gfa}
++            # pgt patch 05: gfaffix < 0.2.0 writes the graph only with -o and prints its affix report on
++            # stdout, which this rule then turns into an empty graph and reports success. Fail instead.
++            grep -q '^S' {output.gfaffix_gfa} || {{ echo "gfaffix produced no segments in {output.gfaffix_gfa} (gfaffix >= 0.2.0 needed)" >&2; exit 1; }}
+         """
+ 

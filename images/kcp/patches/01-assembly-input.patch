@@ -1,0 +1,30 @@
+--- a/rules/graph_construction.smk	2026-11-20 11:38:24.497657118 -0500
++++ b/rules/graph_construction.smk	2026-11-20 14:39:55.421675227 -0500
+@@ -15,15 +15,15 @@
+         runtime_hrs=10
+     shell:
+         """
+-        awk '{{if(substr($0,1,1)==">") print ">CHM13."substr($1,2,length($1));else print $0}}' {input.chm13_fa} > {output.chm13_rename_fa}
+-        awk '{{if(substr($0,1,1)==">") print ">GRCh38."substr($1,2,length($1));else print $0}}' {input.grch38_fa} > {output.grch38_rename_fa} 
++        awk '{{if(substr($0,1,1)==">") print ">CHM13."substr($1,2,length($1));else print $0}}' <(zcat -f {input.chm13_fa}) > {output.chm13_rename_fa}
++        awk '{{if(substr($0,1,1)==">") print ">GRCh38."substr($1,2,length($1));else print $0}}' <(zcat -f {input.grch38_fa}) > {output.grch38_rename_fa} 
+         samtools faidx {output.chm13_rename_fa}
+         samtools faidx {output.grch38_rename_fa}
+         """
+ 
+ rule rename_assembly:
+     input:
+-        fa='../01_Assembly/results/{sample}/{sample}.{haplotype}.fasta',
++        fa=config['fa'],
+     output:
+         rename_fa='results/fasta/{sample}.{haplotype}.fasta',
+         rename_fai='results/fasta/{sample}.{haplotype}.fasta.fai'
+@@ -34,7 +34,7 @@
+         runtime_hrs=10
+     shell:
+         """
+-        awk -v sample={wildcards.sample} -v hap={wildcards.haplotype} '{{if(substr($0,1,1)==">") print ">"sample"."hap"."substr($1,2,length($1));else print $0}}' {input.fa} > {output.rename_fa}
++        awk -v sample={wildcards.sample} -v hap={wildcards.haplotype} '{{if(substr($0,1,1)==">") print ">"sample"."hap"."substr($1,2,length($1));else print $0}}' <(zcat -f {input.fa}) > {output.rename_fa}
+         samtools faidx {output.rename_fa}
+         """
+ 

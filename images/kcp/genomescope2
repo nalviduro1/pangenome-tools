@@ -1,0 +1,4 @@
+#!/bin/bash
+# GenomeScope 2.0.1 lives in its own environment (/opt/envs/gs); run it with that environment first on PATH.
+export PATH=/opt/envs/gs/bin:$PATH
+exec /opt/envs/gs/bin/genomescope2 "$@"
